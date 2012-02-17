@@ -17,6 +17,8 @@ function doorStatus : Tracks -> DoorStatus
 function doorSensor : Tracks -> DoorSensorStatus
 function deadline : Tracks -> TIME
 function businessFactor : Tracks -> NUMBER
+function businessGrowth : Tracks -> NUMBER
+function businessDecay : Tracks -> NUMBER
 
 init InitRule
 
@@ -33,8 +35,13 @@ rule InitRule = {
 		doorStatus(t) := closed
 		doorSensor(t) := clear
 		deadline(t) := infinity
-		businessFactor(t) := 1.0
 	}
+	businessFactor(west) := 0.5
+	businessGrowth(west) := 0.01
+	businessDecay(west) := 0.91
+	businessFactor(east) := 0.5
+	businessGrowth(east) := 0.005
+	businessDecay(east) := 0.91
 	program(WestTrackController) := @WestTrackControl
 	program(WestDoorController) := @WestDoorControl
 	program(EastTrackController) := @EastTrackControl
@@ -47,6 +54,10 @@ rule InitRule = {
 rule WestTrackControl = {
 	handleArrived(west)
 	handleLeaving(west)
+}
+rule EastTrackControl = {
+	handleArrived(east)
+	handleLeaving(east)
 }
 
 rule handleArrived(t) = 
@@ -73,13 +84,16 @@ rule handleLeaving(t) = {
 rule WestDoorControl = {
 	handleOpening(west)
 	handleClosing(west)	
+}		
+rule EastDoorControl = {
+	handleOpening(east)
+	handleClosing(east)	
 }
 
 rule handleOpening(t) = 
 	if trackStatus(t) = stopped and doorStatus(t) = opening and now >= deadline(t) then {
 		doorStatus(t) := open
 		deadline(t) := now + doorStayOpenT
-		businessFactor(t) := random 
 	}
 
 rule handleClosing(t) = {
@@ -96,25 +110,40 @@ rule handleClosing(t) = {
 }
 
 rule Station = {
-	if random < 0.05 and trackStatus(west) = empty then {
-		trackStatus(west) := stopped
+	forall t in Tracks do {
+		if doorStatus(t) = open or doorStatus(t) = closing then 
+			businessFactor(t) := businessFactor(t)*businessDecay(t)
+		else 		
+			businessFactor(t) := min(businessFactor(t) + businessGrowth(t), 1)
 	}
-	if doorStatus(west) = open or doorStatus(west) = closing then {
-		businessFactor(west) := businessFactor(west)*0.98
-		if random < businessFactor(west) then
-			doorSensor(west) := blocked
-		else
-			doorSensor(west) := clear
+	choose t in Tracks do {
+		if random < 0.05 and trackStatus(t) = empty then {
+			trackStatus(t) := stopped
+		}
+		if doorStatus(t) = open or doorStatus(t) = closing then {
+			if random < businessFactor(t) then
+				doorSensor(t) := blocked
+			else
+				doorSensor(t) := clear
+		}
 	}
 }
 
 rule ObserverProgram =
 	seqblock
 		print "Time: " + ((now - startTime) / 1000) + " seconds"
-		print "Track west is " + trackStatus(west)
-		print "West Doors are " + doorStatus(west)
+		print "West Track is " + trackStatus(west)
+		if trackStatus(west) != empty then
+			print "West Doors are " + doorStatus(west)
 		if doorStatus(west) = open or doorStatus(west) = closing then
 			print "Sensors are " + doorSensor(west)
-			print "businessFactor: " + businessFactor(west)
+		//print "businessFactor: " + businessFactor(west)
 		print ""
+		print "East Track is " + trackStatus(east)
+		if trackStatus(east) != empty then
+			print "East Doors are " + doorStatus(east)
+		if doorStatus(east) = open or doorStatus(east) = closing then
+			print "Sensors are " + doorSensor(east)
+		//print "businessFactor: " + businessFactor(east)
+		print "\n"
 	endseqblock
