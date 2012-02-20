@@ -1,0 +1,157 @@
+// Darius Yao, 301008959
+
+CoreASM skytrain
+
+use Standard
+use BasicASM
+use Time
+use Math
+
+universe Agents = {WestTrackController, EastTrackController, WestDoorController, EastDoorController, observer, environment}
+
+enum Tracks = {west, east}
+enum TrackStatus = {empty, arriving, stopped, prepLeaving, leaving}
+enum DoorStatus = {open, closing, closed, opening}
+enum DoorSensorStatus = {clear, blocked}
+
+function trackStatus : Tracks -> TrackStatus
+function doorStatus : Tracks -> DoorStatus
+function doorSensor : Tracks -> DoorSensorStatus
+function deadline : Tracks -> TIME
+function businessFactor : Tracks -> NUMBER
+function businessGrowth : Tracks -> NUMBER
+function businessDecay : Tracks -> NUMBER
+
+init InitRule
+
+rule InitRule = {
+	doorOpeningT := 2000
+	doorStayOpenT := 10000
+	doorClosingT := 2000
+	doorCloseCheckT := 2000
+	doorInterferenceT := 1000
+	trainArriveT := 5000
+	trainLeaveT := 10000
+	startTime := now
+	forall t in Tracks do {
+		trackStatus(t) := empty
+		doorStatus(t) := closed
+		doorSensor(t) := clear
+		deadline(t) := infinity
+	}
+	businessFactor(west) := 0.5
+	businessGrowth(west) := 0.01
+	businessDecay(west) := 0.91
+	businessFactor(east) := 0.5
+	businessGrowth(east) := 0.005
+	businessDecay(east) := 0.91
+	program(WestTrackController) := @WestTrackControl
+	program(WestDoorController) := @WestDoorControl
+	program(EastTrackController) := @EastTrackControl
+	program(EastDoorController) := @EastDoorControl
+	program(environment) := @Station
+	program(observer) := @ObserverProgram
+	program(self) := undef
+}
+
+rule WestTrackControl = {
+	handleArrived(west)
+	handleLeaving(west)
+}
+rule EastTrackControl = {
+	handleArrived(east)
+	handleLeaving(east)
+}
+
+rule handleArrived(t) = 
+	if trackStatus(t) = stopped and deadline(t) = infinity then {
+		deadline(t) := now + doorOpeningT
+		doorStatus(t) := opening
+	}
+
+rule handleLeaving(t) = {
+	if trackStatus(t) = stopped and doorStatus(t) = closed and now >= deadline(t) then {
+		deadline(t) := now + doorCloseCheckT
+		trackStatus(t) := prepLeaving
+	}
+	if trackStatus(t) = prepLeaving and now >= deadline(t) then {
+		trackStatus(t) := leaving
+		deadline(t) := now + trainLeaveT
+	}
+	if trackStatus(t) = leaving and now >= deadline(t) then {
+		trackStatus(t) := empty
+		deadline(t) := infinity
+	}
+}
+		
+rule WestDoorControl = {
+	handleOpening(west)
+	handleClosing(west)	
+}		
+rule EastDoorControl = {
+	handleOpening(east)
+	handleClosing(east)	
+}
+
+rule handleOpening(t) = 
+	if trackStatus(t) = stopped and doorStatus(t) = opening and now >= deadline(t) then {
+		doorStatus(t) := open
+		deadline(t) := now + doorStayOpenT
+	}
+
+rule handleClosing(t) = {
+	if trackStatus(t) = stopped and doorStatus(t) = open and now >= deadline(t) and doorSensor(t) = clear then {
+		doorStatus(t) := closing
+		deadline(t) := now + doorClosingT
+	}
+	if trackStatus(t) = stopped and doorStatus(t) = closing and doorSensor(t) = blocked then {
+		doorStatus(t) := open
+		deadline(t) := now + doorInterferenceT
+	}
+	if trackStatus(t) = stopped and doorStatus(t) = closing and doorSensor(t) = clear and now >= deadline(t) then
+		doorStatus(t) := closed
+}
+
+rule Station = {
+	forall t in Tracks do {
+		if doorStatus(t) = open or doorStatus(t) = closing then 
+			businessFactor(t) := businessFactor(t)*businessDecay(t)
+		else 		
+			businessFactor(t) := min(businessFactor(t) + businessGrowth(t), 1)
+	}
+	choose t in Tracks do {
+		if random < 0.05 and trackStatus(t) = empty then {
+			trackStatus(t) := arriving
+			deadline(t) := now
+		}
+		if trackStatus(t) = arriving and now >= deadline(t) + trainArriveT then {
+			trackStatus(t) := stopped
+			deadline(t) := infinity
+		}
+		if doorStatus(t) = open or doorStatus(t) = closing then {
+			if random < businessFactor(t) then
+				doorSensor(t) := blocked
+			else
+				doorSensor(t) := clear
+		}
+	}
+}
+
+rule ObserverProgram =
+	seqblock
+		print "Time: " + ((now - startTime) / 1000) + " seconds"
+		print "West Track is " + trackStatus(west)
+		if trackStatus(west) != empty then
+			print "West Doors are " + doorStatus(west)
+		if doorStatus(west) = open or doorStatus(west) = closing then
+			print "Sensors are " + doorSensor(west)
+		//print "businessFactor: " + businessFactor(west)
+		print ""
+		print "East Track is " + trackStatus(east)
+		if trackStatus(east) != empty then
+			print "East Doors are " + doorStatus(east)
+		if doorStatus(east) = open or doorStatus(east) = closing then
+			print "Sensors are " + doorSensor(east)
+		//print "businessFactor: " + businessFactor(east)
+		print "\n"
+	endseqblock
